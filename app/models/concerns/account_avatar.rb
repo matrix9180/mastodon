@@ -2,40 +2,33 @@
 
 module AccountAvatar
   extend ActiveSupport::Concern
-  IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif'].freeze
+
+  IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].freeze
+  LIMIT = 2.megabytes
 
   class_methods do
     def avatar_styles(file)
-      styles = { original: '120x120#' }
-      styles[:static] = { format: 'png' } if file.content_type == 'image/gif'
+      styles = { original: { geometry: '400x400#', file_geometry_parser: FastGeometryParser } }
+      styles[:static] = { geometry: '400x400#', format: 'png', convert_options: '-coalesce', file_geometry_parser: FastGeometryParser } if file.content_type == 'image/gif'
       styles
     end
+
     private :avatar_styles
   end
 
   included do
     # Avatar upload
-    has_attached_file :avatar, styles: ->(f) { avatar_styles(f) }, convert_options: { all: '-quality 80 -strip' }
+    has_attached_file :avatar, styles: ->(f) { avatar_styles(f) }, convert_options: { all: '-strip' }, processors: [:lazy_thumbnail]
     validates_attachment_content_type :avatar, content_type: IMAGE_MIME_TYPES
-    validates_attachment_size :avatar, less_than: 2.megabytes
+    validates_attachment_size :avatar, less_than: LIMIT
+    remotable_attachment :avatar, LIMIT
+  end
 
-    def avatar_original_url
-      avatar.url(:original)
-    end
+  def avatar_original_url
+    avatar.url(:original)
+  end
 
-    def avatar_static_url
-      avatar_content_type == 'image/gif' ? avatar.url(:static) : avatar_original_url
-    end
-
-    def avatar_remote_url=(url)
-      parsed_url = Addressable::URI.parse(url).normalize
-
-      return if !%w(http https).include?(parsed_url.scheme) || parsed_url.host.empty? || self[:avatar_remote_url] == url
-
-      self.avatar              = URI.parse(parsed_url.to_s)
-      self[:avatar_remote_url] = url
-    rescue OpenURI::HTTPError, OpenSSL::SSL::SSLError, Paperclip::Errors::NotIdentifiedByImageMagickError => e
-      Rails.logger.debug "Error fetching remote avatar: #{e}"
-    end
+  def avatar_static_url
+    avatar_content_type == 'image/gif' ? avatar.url(:static) : avatar_original_url
   end
 end

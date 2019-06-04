@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 class RemoteFollowController < ApplicationController
-  layout 'public'
+  layout 'modal'
 
   before_action :set_account
-  before_action :gone, if: -> { @account.suspended? }
+  before_action :gone, if: :suspended_account?
+  before_action :set_body_classes
 
   def new
     @remote_follow = RemoteFollow.new(session_params)
@@ -33,5 +34,14 @@ class RemoteFollowController < ApplicationController
 
   def set_account
     @account = Account.find_local!(params[:account_username])
+  end
+
+  def suspended_account?
+    @account.suspended?
+  end
+
+  def set_body_classes
+    @body_classes = 'modal-layout'
+    @hide_header  = true
   end
 end

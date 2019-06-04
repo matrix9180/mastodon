@@ -5,21 +5,27 @@ class AccountFilter
 
   def initialize(params)
     @params = params
+    set_defaults!
   end
 
   def results
-    scope = Account.alphabetic
+    scope = Account.recent.includes(:user)
+
     params.each do |key, value|
-      scope.merge!(scope_for(key, value)) if value.present?
+      scope.merge!(scope_for(key, value.to_s.strip)) if value.present?
     end
+
     scope
   end
 
   private
 
-  def scope_for(key, value)
-    accounts = Account.arel_table
+  def set_defaults!
+    params['local']  = '1' if params['remote'].blank?
+    params['active'] = '1' if params['suspended'].blank? && params['silenced'].blank? && params['pending'].blank?
+  end
 
+  def scope_for(key, value)
     case key.to_s
     when 'local'
       Account.local
@@ -27,31 +33,35 @@ class AccountFilter
       Account.remote
     when 'by_domain'
       Account.where(domain: value)
+    when 'active'
+      Account.without_suspended
+    when 'pending'
+      accounts_with_users.merge User.pending
     when 'silenced'
       Account.silenced
-    when 'recent'
-      Account.recent
     when 'suspended'
       Account.suspended
     when 'username'
-      Account.where(accounts[:username].matches("#{value}%"))
+      Account.matches_username(value)
     when 'display_name'
-      Account.where(accounts[:display_name].matches("#{value}%"))
+      Account.matches_display_name(value)
     when 'email'
-      users = User.arel_table
-      Account.joins(:user).merge(User.where(users[:email].matches("#{value}%")))
+      accounts_with_users.merge User.matches_email(value)
     when 'ip'
-      return Account.default_scoped unless valid_ip?(value)
-      matches_ip = User.where(current_sign_in_ip: value).or(User.where(last_sign_in_ip: value))
-      Account.joins(:user).merge(matches_ip)
+      valid_ip?(value) ? accounts_with_users.where('users.current_sign_in_ip <<= ?', value) : Account.none
+    when 'staff'
+      accounts_with_users.merge User.staff
     else
       raise "Unknown filter: #{key}"
     end
   end
 
+  def accounts_with_users
+    Account.joins(:user)
+  end
+
   def valid_ip?(value)
-    IPAddr.new(value)
-    true
+    IPAddr.new(value) && true
   rescue IPAddr::InvalidAddressError
     false
   end

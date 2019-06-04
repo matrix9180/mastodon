@@ -1,15 +1,12 @@
 # frozen_string_literal: true
-require 'sidekiq-scheduler'
 
 class Scheduler::SubscriptionsScheduler
   include Sidekiq::Worker
 
-  def perform
-    logger.info 'Queueing PuSH re-subscriptions'
+  sidekiq_options unique: :until_executed, retry: 0
 
-    expiring_accounts.pluck(:id).each do |id|
-      Pubsubhubbub::SubscribeWorker.perform_async(id)
-    end
+  def perform
+    Pubsubhubbub::SubscribeWorker.push_bulk(expiring_accounts.pluck(:id))
   end
 
   private

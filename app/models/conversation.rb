@@ -3,14 +3,14 @@
 #
 # Table name: conversations
 #
-#  id         :integer          not null, primary key
+#  id         :bigint(8)        not null, primary key
 #  uri        :string
 #  created_at :datetime         not null
 #  updated_at :datetime         not null
 #
 
 class Conversation < ApplicationRecord
-  validates :uri, uniqueness: true, if: :uri
+  validates :uri, uniqueness: true, if: :uri?
 
   has_many :statuses
 

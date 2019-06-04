@@ -1,4 +1,6 @@
-import api from '../api'
+import api from '../api';
+import { fetchRelationships } from './accounts';
+import { importFetchedAccounts, importFetchedStatuses } from './importer';
 
 export const SEARCH_CHANGE = 'SEARCH_CHANGE';
 export const SEARCH_CLEAR  = 'SEARCH_CLEAR';
@@ -11,13 +13,13 @@ export const SEARCH_FETCH_FAIL    = 'SEARCH_FETCH_FAIL';
 export function changeSearch(value) {
   return {
     type: SEARCH_CHANGE,
-    value
+    value,
   };
 };
 
 export function clearSearch() {
   return {
-    type: SEARCH_CLEAR
+    type: SEARCH_CLEAR,
   };
 };
 
@@ -31,13 +33,23 @@ export function submitSearch() {
 
     dispatch(fetchSearchRequest());
 
-    api(getState).get('/api/v1/search', {
+    api(getState).get('/api/v2/search', {
       params: {
         q: value,
-        resolve: true
-      }
+        resolve: true,
+        limit: 5,
+      },
     }).then(response => {
+      if (response.data.accounts) {
+        dispatch(importFetchedAccounts(response.data.accounts));
+      }
+
+      if (response.data.statuses) {
+        dispatch(importFetchedStatuses(response.data.statuses));
+      }
+
       dispatch(fetchSearchSuccess(response.data));
+      dispatch(fetchRelationships(response.data.accounts.map(item => item.id)));
     }).catch(error => {
       dispatch(fetchSearchFail(error));
     });
@@ -46,7 +58,7 @@ export function submitSearch() {
 
 export function fetchSearchRequest() {
   return {
-    type: SEARCH_FETCH_REQUEST
+    type: SEARCH_FETCH_REQUEST,
   };
 };
 
@@ -54,20 +66,18 @@ export function fetchSearchSuccess(results) {
   return {
     type: SEARCH_FETCH_SUCCESS,
     results,
-    accounts: results.accounts,
-    statuses: results.statuses
   };
 };
 
 export function fetchSearchFail(error) {
   return {
     type: SEARCH_FETCH_FAIL,
-    error
+    error,
   };
 };
 
 export function showSearch() {
   return {
-    type: SEARCH_SHOW
+    type: SEARCH_SHOW,
   };
 };

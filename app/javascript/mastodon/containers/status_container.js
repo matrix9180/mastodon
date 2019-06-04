@@ -4,40 +4,48 @@ import Status from '../components/status';
 import { makeGetStatus } from '../selectors';
 import {
   replyCompose,
-  mentionCompose
+  mentionCompose,
+  directCompose,
 } from '../actions/compose';
 import {
   reblog,
   favourite,
   unreblog,
-  unfavourite
+  unfavourite,
+  pin,
+  unpin,
 } from '../actions/interactions';
+import { blockAccount } from '../actions/accounts';
 import {
-  blockAccount,
-  muteAccount
-} from '../actions/accounts';
-import { muteStatus, unmuteStatus, deleteStatus } from '../actions/statuses';
+  muteStatus,
+  unmuteStatus,
+  deleteStatus,
+  hideStatus,
+  revealStatus,
+} from '../actions/statuses';
+import { initMuteModal } from '../actions/mutes';
 import { initReport } from '../actions/reports';
 import { openModal } from '../actions/modal';
-import { createSelector } from 'reselect'
-import { isMobile } from '../is_mobile'
 import { defineMessages, injectIntl, FormattedMessage } from 'react-intl';
+import { boostModal, deleteModal } from '../initial_state';
+import { showAlertForError } from '../actions/alerts';
 
 const messages = defineMessages({
   deleteConfirm: { id: 'confirmations.delete.confirm', defaultMessage: 'Delete' },
   deleteMessage: { id: 'confirmations.delete.message', defaultMessage: 'Are you sure you want to delete this status?' },
+  redraftConfirm: { id: 'confirmations.redraft.confirm', defaultMessage: 'Delete & redraft' },
+  redraftMessage: { id: 'confirmations.redraft.message', defaultMessage: 'Are you sure you want to delete this status and re-draft it? Favourites and boosts will be lost, and replies to the original post will be orphaned.' },
   blockConfirm: { id: 'confirmations.block.confirm', defaultMessage: 'Block' },
-  muteConfirm: { id: 'confirmations.mute.confirm', defaultMessage: 'Mute' },
+  replyConfirm: { id: 'confirmations.reply.confirm', defaultMessage: 'Reply' },
+  replyMessage: { id: 'confirmations.reply.message', defaultMessage: 'Replying now will overwrite the message you are currently composing. Are you sure you want to proceed?' },
+  blockAndReport: { id: 'confirmations.block.block_and_report', defaultMessage: 'Block & Report' },
 });
 
 const makeMapStateToProps = () => {
   const getStatus = makeGetStatus();
 
   const mapStateToProps = (state, props) => ({
-    status: getStatus(state, props.id),
-    me: state.getIn(['meta', 'me']),
-    boostModal: state.getIn(['meta', 'boost_modal']),
-    autoPlayGif: state.getIn(['meta', 'auto_play_gif'])
+    status: getStatus(state, props),
   });
 
   return mapStateToProps;
@@ -46,22 +54,33 @@ const makeMapStateToProps = () => {
 const mapDispatchToProps = (dispatch, { intl }) => ({
 
   onReply (status, router) {
-    dispatch(replyCompose(status, router));
+    dispatch((_, getState) => {
+      let state = getState();
+      if (state.getIn(['compose', 'text']).trim().length !== 0) {
+        dispatch(openModal('CONFIRM', {
+          message: intl.formatMessage(messages.replyMessage),
+          confirm: intl.formatMessage(messages.replyConfirm),
+          onConfirm: () => dispatch(replyCompose(status, router)),
+        }));
+      } else {
+        dispatch(replyCompose(status, router));
+      }
+    });
   },
 
   onModalReblog (status) {
-    dispatch(reblog(status));
-  },
-
-  onReblog (status, e) {
     if (status.get('reblogged')) {
       dispatch(unreblog(status));
     } else {
-      if (e.shiftKey || !this.boostModal) {
-        this.onModalReblog(status);
-      } else {
-        dispatch(openModal('BOOST', { status, onReblog: this.onModalReblog }));
-      }
+      dispatch(reblog(status));
+    }
+  },
+
+  onReblog (status, e) {
+    if (e.shiftKey || !boostModal) {
+      this.onModalReblog(status);
+    } else {
+      dispatch(openModal('BOOST', { status, onReblog: this.onModalReblog }));
     }
   },
 
@@ -73,12 +92,35 @@ const mapDispatchToProps = (dispatch, { intl }) => ({
     }
   },
 
-  onDelete (status) {
-    dispatch(openModal('CONFIRM', {
-      message: intl.formatMessage(messages.deleteMessage),
-      confirm: intl.formatMessage(messages.deleteConfirm),
-      onConfirm: () => dispatch(deleteStatus(status.get('id')))
+  onPin (status) {
+    if (status.get('pinned')) {
+      dispatch(unpin(status));
+    } else {
+      dispatch(pin(status));
+    }
+  },
+
+  onEmbed (status) {
+    dispatch(openModal('EMBED', {
+      url: status.get('url'),
+      onError: error => dispatch(showAlertForError(error)),
     }));
+  },
+
+  onDelete (status, history, withRedraft = false) {
+    if (!deleteModal) {
+      dispatch(deleteStatus(status.get('id'), history, withRedraft));
+    } else {
+      dispatch(openModal('CONFIRM', {
+        message: intl.formatMessage(withRedraft ? messages.redraftMessage : messages.deleteMessage),
+        confirm: intl.formatMessage(withRedraft ? messages.redraftConfirm : messages.deleteConfirm),
+        onConfirm: () => dispatch(deleteStatus(status.get('id'), history, withRedraft)),
+      }));
+    }
+  },
+
+  onDirect (account, router) {
+    dispatch(directCompose(account, router));
   },
 
   onMention (account, router) {
@@ -93,11 +135,17 @@ const mapDispatchToProps = (dispatch, { intl }) => ({
     dispatch(openModal('VIDEO', { media, time }));
   },
 
-  onBlock (account) {
+  onBlock (status) {
+    const account = status.get('account');
     dispatch(openModal('CONFIRM', {
       message: <FormattedMessage id='confirmations.block.message' defaultMessage='Are you sure you want to block {name}?' values={{ name: <strong>@{account.get('acct')}</strong> }} />,
       confirm: intl.formatMessage(messages.blockConfirm),
-      onConfirm: () => dispatch(blockAccount(account.get('id')))
+      onConfirm: () => dispatch(blockAccount(account.get('id'))),
+      secondary: intl.formatMessage(messages.blockAndReport),
+      onSecondary: () => {
+        dispatch(blockAccount(account.get('id')));
+        dispatch(initReport(account, status));
+      },
     }));
   },
 
@@ -106,11 +154,7 @@ const mapDispatchToProps = (dispatch, { intl }) => ({
   },
 
   onMute (account) {
-    dispatch(openModal('CONFIRM', {
-      message: <FormattedMessage id='confirmations.mute.message' defaultMessage='Are you sure you want to mute {name}?' values={{ name: <strong>@{account.get('acct')}</strong> }} />,
-      confirm: intl.formatMessage(messages.muteConfirm),
-      onConfirm: () => dispatch(muteAccount(account.get('id')))
-    }));
+    dispatch(initMuteModal(account));
   },
 
   onMuteConversation (status) {
@@ -118,6 +162,14 @@ const mapDispatchToProps = (dispatch, { intl }) => ({
       dispatch(unmuteStatus(status.get('id')));
     } else {
       dispatch(muteStatus(status.get('id')));
+    }
+  },
+
+  onToggleHidden (status) {
+    if (status.get('hidden')) {
+      dispatch(revealStatus(status.get('id')));
+    } else {
+      dispatch(hideStatus(status.get('id')));
     }
   },
 
